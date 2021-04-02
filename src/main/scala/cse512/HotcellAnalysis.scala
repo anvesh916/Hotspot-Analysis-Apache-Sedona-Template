@@ -56,11 +56,8 @@ def runHotcellAnalysis(spark: SparkSession, pointPath: String): DataFrame =
   hotcellCalc.show()
   
   val mean = (hotcellCalc.first().getLong(0).toDouble / numCells.toDouble).toDouble
-  println(s"Mean is ${mean}")
-
   val sumSqrHotcells = (hotcellCalc.first().getDouble(1)).toDouble
   val standardDeviation = math.sqrt((sumSqrHotcells.toDouble / numCells.toDouble) - (mean.toDouble * mean.toDouble )).toDouble
-  println(s"SD is ${standardDeviation}")
 
   // Weights calculation
   spark.udf.register("neighbourhood", (inputX: Int, inputY: Int, inputZ: Int, minX: Int, maxX: Int, minY: Int, maxY: Int, minZ: Int, maxZ: Int) => ((HotcellUtils.calcNeighborhood(inputX, inputY, inputZ, minX, minY, minZ, maxX, maxY, maxZ))))
