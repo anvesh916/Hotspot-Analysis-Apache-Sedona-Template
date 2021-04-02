@@ -3,7 +3,5 @@
 /target/
 /test/
 /null/
-.metals/metals.h2.db
-.metals/metals.lock.db
-.metals/metals.log
-.vscode/settings.json
+/.metals/
+/.vscode/
