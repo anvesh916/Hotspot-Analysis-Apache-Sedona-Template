@@ -47,6 +47,42 @@ object HotcellUtils {
     return calendar.get(Calendar.DAY_OF_MONTH)
   }
 
-  // YOU NEED TO CHANGE THIS PART
 
+  def calcNeighborhood(inputX: Int, inputY: Int, inputZ: Int, minX: Int, maxX: Int, minY: Int, maxY: Int, minZ: Int, maxZ: Int): Int =
+  {
+    var count = 0
+      
+    if (inputX == minX || inputX == maxX) {
+      count += 1
+    }
+
+    if (inputY == minY || inputY == maxY) {
+    	  count += 1
+    }
+
+    if (inputZ == minZ || inputZ == maxZ) {
+    	  count += 1
+    }
+
+    if (count == 1) {
+      // On the surface
+      return 17;
+    } else if (count == 2) {
+      //On the edge
+      return 11;
+    } else if (count == 3) {
+      return 7;
+      //on the corner
+    }
+    // inside the cube
+    return 26;
+  }
+
+  def calculateZScore(weightSum: Int, sumHotCells: Int, numCells: Int, x: Int, y: Int, z: Int, mean: Double, standardDeviation: Double): Double = 
+  {
+    val dividend = (sumHotCells.toDouble - (mean * weightSum.toDouble))
+    val divisor = standardDeviation * math.sqrt((((numCells.toDouble * weightSum.toDouble) - (weightSum.toDouble * weightSum.toDouble)) / (numCells.toDouble - 1.0).toDouble).toDouble).toDouble
+    
+    return (dividend / divisor).toDouble
+  }
 }
