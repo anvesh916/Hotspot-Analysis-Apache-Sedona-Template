@@ -49,11 +49,9 @@ def runHotcellAnalysis(spark: SparkSession, pointPath: String): DataFrame =
 
   pickupInfo = spark.sql("select x, y, z, count(*) as hotCells from selectedCellVals group by z, y, x order by z,y,x").persist()
   pickupInfo.createOrReplaceTempView("selectedCellHotness")
-  pickupInfo.show()
 
   spark.udf.register("squared", (inputX: Int) => (((inputX*inputX).toDouble)))
   val hotcellCalc = spark.sql("select sum(hotcells) as sumHotcells, sum(squared(hotcells)) as sumSqrHotcells from selectedCellHotness")
-  hotcellCalc.show()
   
   val mean = (hotcellCalc.first().getLong(0).toDouble / numCells.toDouble).toDouble
   val sumSqrHotcells = (hotcellCalc.first().getDouble(1)).toDouble
@@ -70,7 +68,7 @@ def runHotcellAnalysis(spark: SparkSession, pointPath: String): DataFrame =
       + "and (hc2.z = hc1.z+1 or hc2.z = hc1.z or hc2.z = hc1.z-1) " 
       + "group by hc1.z, hc1.y, hc1.x order by hc1.z, hc1.y, hc1.x").persist()
 	neighbourhoodCells.createOrReplaceTempView("neighborhoodCells")
-  neighbourhoodCells.show()
+  // neighbourhoodCells.show()
   
   spark.udf.register("zScore", (nCellCount: Int, sumHotCells: Int, numCells: Int, x: Int, y: Int, z: Int, mean: Double, standardDeviation: Double) => ((HotcellUtils.calculateZScore(nCellCount, sumHotCells, numCells, x, y, z, mean, standardDeviation))))
   pickupInfo = spark.sql(s"select x, y, z, zScore(spatialWeightSum, sumHotCells, ${numCells}, x, y, z, ${mean}, ${standardDeviation}) as getisOrdStatistic from neighborhoodCells order by getisOrdStatistic desc");
