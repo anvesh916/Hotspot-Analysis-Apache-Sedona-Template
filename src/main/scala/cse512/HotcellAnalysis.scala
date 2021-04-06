@@ -1,10 +1,10 @@
 package cse512
 
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession, Row}
 import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.rdd.RDD
 
 object HotcellAnalysis {
   Logger.getLogger("org.spark_project").setLevel(Level.WARN)
@@ -12,7 +12,7 @@ object HotcellAnalysis {
   Logger.getLogger("akka").setLevel(Level.WARN)
   Logger.getLogger("com").setLevel(Level.WARN)
 
-def runHotcellAnalysis(spark: SparkSession, pointPath: String): DataFrame =
+  def runHotcellAnalysis(spark: SparkSession, pointPath: String): DataFrame =
 {
   // Load the original data from a data source
   var pickupInfo = spark.read.format("csv").option("delimiter",";").option("header","false").load(pointPath);
@@ -44,40 +44,23 @@ def runHotcellAnalysis(spark: SparkSession, pointPath: String): DataFrame =
   val maxZ = 31
   val numCells = (maxX - minX + 1)*(maxY - minY + 1)*(maxZ - minZ + 1)
 
-  pickupInfo = spark.sql(s"select x,y,z from pickupInfoView where x>= ${minX} and x<= ${maxX} and y>= ${minY} and y<= ${maxY} and z>= ${minZ} and z<= ${maxZ} order by z,y,x")
-  pickupInfo.createOrReplaceTempView("selectedCellVals")
-
-  pickupInfo = spark.sql("select x, y, z, count(*) as hotCells from selectedCellVals group by z, y, x order by z,y,x").persist()
-  pickupInfo.createOrReplaceTempView("selectedCellHotness")
-
-  spark.udf.register("squared", (inputX: Int) => (((inputX*inputX).toDouble)))
-  val hotcellCalc = spark.sql("select sum(hotcells) as sumHotcells, sum(squared(hotcells)) as sumSqrHotcells from selectedCellHotness")
+  pickupInfo = spark.sql(s"select x,y,z from pickupInfoView where x>= ${minX} and x<= ${maxX} and y>= ${minY} and y<= ${maxY} and z>= ${minZ} and z<= ${maxZ}")
+  pickupInfo = pickupInfo.groupBy("x", "y", "z").count()
   
-  val mean = (hotcellCalc.first().getLong(0).toDouble / numCells.toDouble).toDouble
-  val sumSqrHotcells = (hotcellCalc.first().getDouble(1)).toDouble
-  val standardDeviation = math.sqrt((sumSqrHotcells.toDouble / numCells.toDouble) - (mean.toDouble * mean.toDouble )).toDouble
-
-  // Weights calculation
-  spark.udf.register("neighbourhood", (inputX: Int, inputY: Int, inputZ: Int, minX: Int, maxX: Int, minY: Int, maxY: Int, minZ: Int, maxZ: Int) => ((HotcellUtils.calcNeighborhood(inputX, inputY, inputZ, minX, minY, minZ, maxX, maxY, maxZ))))
+  val mean: Double = pickupInfo.agg(sum("count") / numCells).first.getDouble(0)
+  val sd: Double = math.sqrt(pickupInfo.agg(sum(pow("count", 2.0)) / numCells - math.pow(mean, 2.0)).first.getDouble(0))
   
-  // Spatial Selfjoin
-  val neighbourhoodCells = spark.sql(s"select neighbourhood(hc1.x, hc1.y, hc1.z, ${minX}, ${maxX}, ${minY}, ${maxY}, ${minZ},${maxZ}) as spatialWeightSum,"
-  		+ "hc1.x as x, hc1.y as y, hc1.z as z, sum(hc2.hotCells) as sumHotCells from selectedCellHotness as hc1, selectedCellHotness as hc2 "
-  		+ "where (hc2.x = hc1.x+1 or hc2.x = hc1.x or hc2.x = hc1.x-1) " 
-      + "and (hc2.y = hc1.y+1 or hc2.y = hc1.y or hc2.y = hc1.y-1) " 
-      + "and (hc2.z = hc1.z+1 or hc2.z = hc1.z or hc2.z = hc1.z-1) " 
-      + "group by hc1.z, hc1.y, hc1.x order by hc1.z, hc1.y, hc1.x").persist()
-	neighbourhoodCells.createOrReplaceTempView("neighborhoodCells")
-  // neighbourhoodCells.show()
+  pickupInfo.createOrReplaceTempView("hotcells")
   
-  spark.udf.register("zScore", (nCellCount: Int, sumHotCells: Int, numCells: Int, x: Int, y: Int, z: Int, mean: Double, standardDeviation: Double) => ((HotcellUtils.calculateZScore(nCellCount, sumHotCells, numCells, x, y, z, mean, standardDeviation))))
-  pickupInfo = spark.sql(s"select x, y, z, zScore(spatialWeightSum, sumHotCells, ${numCells}, x, y, z, ${mean}, ${standardDeviation}) as getisOrdStatistic from neighborhoodCells order by getisOrdStatistic desc");
-  pickupInfo.createOrReplaceTempView("zScore")
+  spark.udf.register("ST_Within", (x1: Int, y1: Int, z1: Int, x2: Int, y2: Int, z2: Int) => (HotcellUtils.ST_Within(x1, y1, z1, x2, y2, z2)))
+  var selfJoinDF = spark.sql("select hc1.x as x, hc1.y as y, hc1.z as z, hc2.count as count, 1 as neighbour from hotcells hc1, hotcells hc2 where ST_Within(hc1.x, hc1.y, hc1.z, hc2.x, hc2.y, hc2.z)")
+  selfJoinDF = selfJoinDF.groupBy("x", "y", "z").sum("count","neighbour")
+  selfJoinDF = selfJoinDF.toDF(Seq("x", "y", "z", "sum", "weight"): _*)
+  selfJoinDF.createOrReplaceTempView("selfJoin")
     
-  pickupInfo = spark.sql("select x, y, z from zScore")
-  pickupInfo.createOrReplaceTempView("finalPickupInfo")
-  pickupInfo.show()
-
-  return pickupInfo
-}
+  spark.udf.register("gScore", (sum: Int, weight:Int) => HotcellUtils.gScore(mean, sd, numCells, sum, weight))
+  var getisScoreDF = spark.sql("select x, y, z, gScore(sum, weight) as score from selfJoin")
+    
+  return getisScoreDF.sort(desc("score")).limit(50).select("x","y","z")
+  }
 }
